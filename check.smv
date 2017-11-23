@@ -1,0 +1,212 @@
+---------------------------------------11111111111---------------------------------------------------
+MODULE load_table_title(table_valid)
+VAR 
+	state : {LOAD_READY, LOAD_TITLE, CACULATE_PERIOD, LOAD_TITLE_DOWN};
+ASSIGN
+	init (state) := LOAD_READY;
+	next (state) := 
+		case 
+			state = LOAD_READY & !table_valid : LOAD_READY;
+			state = LOAD_READY & table_valid : LOAD_TITLE ;
+			state = LOAD_TITLE : CACULATE_PERIOD;
+			(state = CACULATE_PERIOD) | (state = LOAD_TITLE_DOWN & table_valid) : LOAD_TITLE_DOWN;
+			!table_valid : LOAD_READY;
+		esac;
+---------------------------------------2222222222-----------------------------------------------------
+MODULE load_table_rows (table_valid, load_title_completely, info_next, info)
+VAR
+	
+	state : {IDLE, PRE_READ_START, PRE_READ_END, UPDATE_CONTENT};
+	
+ASSIGN
+	init (state) := IDLE;
+	next (state) :=
+		case
+			table_valid & (state = IDLE & !load_title_completely) : IDLE;
+			table_valid & (state = IDLE & load_title_completely & !info_next) : PRE_READ_START;
+			table_valid & (state = PRE_READ_END & info) : PRE_READ_END;
+			table_valid & (state = PRE_READ_START) :PRE_READ_END;
+			table_valid & (state = PRE_READ_END & !info) : UPDATE_CONTENT;
+			table_valid & (state = UPDATE_CONTENT) : PRE_READ_START;
+			!table_valid : IDLE;
+			TRUE : IDLE;
+		esac;
+	
+-------------------------------------33333333------------------------------------------
+MODULE 	send_start_checking (sync_status, period_mask) 
+VAR 
+	state : {IDLE, START_CHECK};
+ASSIGN
+	init (state) := IDLE;
+	next (state) :=
+		case
+			state = IDLE & !(sync_status & period_mask) : IDLE;
+			state = IDLE & (sync_status & period_mask) : START_CHECK;
+			state = START_CHECK & (sync_status & period_mask) : START_CHECK;
+			state = START_CHECK & !(sync_status & period_mask) : IDLE;
+			TRUE : IDLE;
+		esac;
+	
+-------------------------------44444444444444444----------------------------------------
+MODULE checking (sync_status, tt_flag, tt_wr, tt_info, time_valid, info, start_checking)
+VAR
+	state : {IDLE, CACULATE_TIME_POINT, CHECKING, WAIT, CHECK_RIGHT, CHECK_WRONG, OPEN_SWITCH};
+
+ASSIGN
+	init (state) := IDLE;
+	next (state) := 
+		case
+			sync_status & (state = IDLE & !(info & start_checking)) : IDLE;
+			sync_status & (state = IDLE & (info & start_checking)) : CACULATE_TIME_POINT;
+			sync_status & (state = CACULATE_TIME_POINT & time_valid & !tt_flag) : CACULATE_TIME_POINT;
+			sync_status & (state = CACULATE_TIME_POINT & tt_flag & time_valid) : WAIT;
+			sync_status & (state = CACULATE_TIME_POINT & !time_valid) : CHECK_WRONG;
+			sync_status & (state = WAIT & !tt_info) : WAIT;
+			sync_status & (state = WAIT & tt_info) : CHECKING;
+			sync_status & (state = CHECKING) : {CHECK_RIGHT, CHECK_WRONG};
+			sync_status & (state = CHECK_RIGHT & !tt_wr) : CHECK_RIGHT;
+			sync_status & (state = CHECK_RIGHT & tt_wr) : OPEN_SWITCH;
+			sync_status & (state = CHECK_WRONG) : IDLE;
+			!sync_status : IDLE;
+			TRUE : IDLE;
+		esac;
+---------------------------------------------------------------------------------------
+MODULE main
+VAR
+	-------------111111------------------
+	table_valid : boolean;
+	period_mask : boolean;
+	load_title_completely : boolean;
+	load_table_title: load_table_title (table_valid);
+	
+	-------------22222-----------------------
+	info_next: boolean;
+	info: boolean;
+	load_table_rows : load_table_rows (table_valid, load_title_completely, info_next, info);
+	-------------3333333-----------------------------
+	sync_status : boolean;
+	start_checking : boolean;
+	send_start_checking : send_start_checking (sync_status, period_mask);
+	---------------44444444444------------------------------
+	tt_flag : boolean;
+	tt_info : boolean;
+	tt_wr : boolean;
+	time_valid : boolean;
+	right : boolean;
+	wrong : boolean;
+	checking : checking (sync_status & table_valid, tt_flag, tt_wr, tt_info, time_valid, info, start_checking);
+	
+	
+	
+--------------------------------------------------------------------
+ASSIGN
+	----------------11111111111------------------
+	--table_valid := TRUE;--
+	
+	init (load_title_completely) := FALSE;
+	next (load_title_completely) := 
+		case
+			load_table_title.state = LOAD_READY : FALSE;
+			load_table_title.state = LOAD_TITLE : TRUE;
+			load_table_title.state = CACULATE_PERIOD : TRUE;
+			load_table_title.state = LOAD_TITLE_DOWN & table_valid : TRUE;
+			load_table_title.state = LOAD_TITLE_DOWN & !table_valid : FALSE;
+		esac;
+    
+	init (period_mask) := FALSE;
+	next (period_mask) :=
+		case
+			load_table_title.state = LOAD_READY | load_table_title.state = LOAD_TITLE : FALSE;
+			load_table_title.state = CACULATE_PERIOD : TRUE;
+			load_table_title.state = LOAD_TITLE_DOWN & table_valid : TRUE;
+			load_table_title.state = LOAD_TITLE_DOWN & !table_valid : FALSE;
+		esac;
+	
+	-------------222222-----------------------
+	
+	init (info_next) := FALSE;
+	next (info_next) :=
+		case
+			table_valid & (load_table_rows.state = IDLE | !load_title_completely) : FALSE; 
+			table_valid & (load_table_rows.state = IDLE & load_title_completely & !info_next) : TRUE;
+			table_valid & (load_table_rows.state = PRE_READ_START | load_table_rows.state = PRE_READ_END & info) : TRUE;
+			table_valid & (load_table_rows.state = PRE_READ_END & !info) : FALSE;
+			table_valid & load_table_rows.state = UPDATE_CONTENT : TRUE;
+			!table_valid : FALSE;
+		esac;
+	
+	init (info) := FALSE;
+	next (info) := 
+		case
+			table_valid & (load_table_rows.state = PRE_READ_END & !info) : TRUE;
+			table_valid & (checking.state = CHECKING & next (checking.state) = CHECK_WRONG) : FALSE;
+			table_valid & (checking.state = CHECK_RIGHT & next (checking.state) = OPEN_SWITCH) : FALSE;
+			!table_valid : FALSE;
+			TRUE : info;
+		esac;
+	-------------3333333333333333------------------------------
+	--sync_status := TRUE;--
+	init(start_checking) := FALSE;
+	next (start_checking) := 
+		case
+			(send_start_checking.state = IDLE | send_start_checking.state = START_CHECK) & sync_status & period_mask : TRUE;
+			(send_start_checking.state = IDLE | send_start_checking.state = START_CHECK) & !(sync_status & period_mask) : FALSE;
+		esac;
+		
+	---------------44444444444--------------------------------------
+	
+	next (tt_flag) :=
+		case
+			next (checking.state) = CHECK_WRONG | next (checking.state) = OPEN_SWITCH : FALSE;
+			tt_flag = TRUE & ( next(checking.state) = WAIT | next(checking.state) = CHECKING | next(checking.state) = CHECK_RIGHT ): TRUE;
+			tt_info = TRUE : TRUE;
+			TRUE : {TRUE, FALSE};
+		esac;
+		
+	
+	next (tt_info) :=
+		case
+			next (checking.state) = CHECK_WRONG : FALSE;
+			checking.state = CHECK_RIGHT & tt_wr :FALSE;
+			tt_info = TRUE : TRUE;
+			next (tt_flag) = FALSE : FALSE;
+			TRUE : {TRUE, FALSE};
+		esac;
+	
+	init (right) := FALSE;
+	next (right) := (next (checking.state) = CHECK_RIGHT);
+	
+	init (wrong) := FALSE;
+	next (wrong) := (next (checking.state) = CHECK_WRONG);	
+		
+	
+-------------------------------------------------------------------------------------
+
+
+-----------功能性验证----------------------------
+SPEC AG EF (checking.state = CHECK_WRONG);
+SPEC AG EF (checking.state = OPEN_SWITCH);
+-----------死锁-----------------------------------
+SPEC ! EF(checking.state = WAIT & load_table_rows.state = PRE_READ_END & AG (checking.state = WAIT & load_table_rows.state = PRE_READ_END))
+SPEC ! EF(checking.state = WAIT & AG checking.state = WAIT)
+------------数据错误------------------------------
+SPEC AG (checking.state = CHECKING -> info )
+SPEC AG (( checking.state != IDLE ) & tt_info -> tt_flag)
+
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
